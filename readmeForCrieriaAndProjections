@@ -1,0 +1,288 @@
+To explain Criteria API and Projections in Spring Boot, we will build a clean, production-ready project.
+
+* Criteria API: Used for building dynamic, type-safe database queries using Java code instead of writing SQL strings.
+* Projections: Used to fetch only specific columns (e.g., just firstName and email) instead of pulling entire heavy database rows,
+which drastically improves application performance.
+
+Here is the complete step-by-step guide using your Instructor and InstructorDetail domain.
+------------------------------
+## Step 1: Create the Project Structure
+Use Spring Initializr (start.spring.io) or your IDE to generate a new project with these settings:
+
+* Project: Maven
+* Language: Java (17 or 21)
+* Spring Boot: 3.x.x
+* Dependencies: Spring Data JPA, Spring Web, MySQL Driver, Lombok
+
+------------------------------
+## Step 2: Configure Database (application.properties)
+Update your properties file to connect to MySQL. We will use update for safety, and switch to a modern MySQL 8+ dialect.
+
+spring.application.name=jpa-criteria-projection-demo
+
+# Database Connection
+spring.datasource.url=jdbc:mysql://localhost:3006/instructor_db?useSSL=false&serverTimezone=UTC
+spring.datasource.username=root
+spring.datasource.password=yourpassword
+
+# JPA / Hibernate Properties
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.database-platform=org.hibernate.dialect.MySQLDialect
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+
+
+* format_sql=true: Formats the printed SQL queries in your console so they are easy to read and debug.
+
+------------------------------
+## Step 3: Define the Entity Classes
+We will use your Instructor and InstructorDetail entities. We add Lombok (@Getter, @Setter, @NoArgsConstructor)
+to clean up boilerplate getters/setters.
+## Instructor.java
+
+package net.guides.springboot.jpa.model;
+import jakarta.persistence.*;import lombok.Getter;import lombok.Setter;import lombok.NoArgsConstructor;import java.util.ArrayList;import java.util.List;
+
+@Entity
+@Table(name = "instructor")
+@Getter
+@Setter
+@NoArgsConstructor
+public class Instructor {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "first_name")
+    private String firstName;
+
+    @Column(name = "last_name")
+    private String lastName;
+
+    private String email;
+
+    @OneToMany(mappedBy = "instructor", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<InstructorDetail> instructorDetails = new ArrayList<>();
+
+    public Instructor(String firstName, String lastName, String email) {
+        this.firstName = firstName;
+        this.lastName = lastName;
+        this.email = email;
+    }
+
+    // Helper method to synchronize bidirectional relationship
+    public void addInstructorDetail(InstructorDetail detail) {
+        instructorDetails.add(detail);
+        detail.setInstructor(this);
+    }
+}
+
+## InstructorDetail.java
+
+package net.guides.springboot.jpa.model;
+import jakarta.persistence.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.NoArgsConstructor;
+
+@Entity
+@Table(name = "instructor_detail")
+@Getter
+@Setter
+@NoArgsConstructor
+public class InstructorDetail {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "youtube_channel")
+    private String youtubeChannel;
+
+    private String hobby;
+
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "instructor_id")
+    private Instructor instructor;
+
+    public InstructorDetail(String youtubeChannel, String hobby) {
+        this.youtubeChannel = youtubeChannel;
+        this.hobby = hobby;
+    }
+}
+
+
+* jakarta.persistence.*: Spring Boot 3 uses Jakarta instead of javax.
+* FetchType.LAZY: Prevents loading parent data unnecessarily when fetching details.
+
+------------------------------
+## Step 4: Create the Projection DTO
+A Projection DTO (Data Transfer Object) is a custom Java class designed to catch only the specific fields we choose to select from the database.
+
+package net.guides.springboot.jpa.dto;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+
+@Getter
+@AllArgsConstructor
+public class InstructorSummaryDTO {
+    private String firstName;
+    private String email;
+    private String hobby;
+}
+
+
+* @AllArgsConstructor: Essential. Hibernate uses this constructor to directly inject queried database fields into this object.
+
+------------------------------
+## Step 5: Implement Criteria & Projection Logic (Repository Layer)
+Standard Spring Data JPA repositories use interfaces. To build a complex custom Criteria API query, we create a dedicated Custom Repository.
+## Create the Interface: InstructorCustomRepository.java
+
+package net.guides.springboot.jpa.repository;
+import net.guides.springboot.jpa.dto.InstructorSummaryDTO;
+import java.util.List;
+public interface InstructorCustomRepository {
+    List<InstructorSummaryDTO> findInstructorSummariesByHobby(String hobby);
+}
+
+## Create the Implementation: InstructorCustomRepositoryImpl.java
+This is where the core logic of Criteria API and Projections happens.
+
+package net.guides.springboot.jpa.repository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.criteria.*;
+import net.guides.springboot.jpa.dto.InstructorSummaryDTO;
+import net.guides.springboot.jpa.model.Instructor;
+import net.guides.springboot.jpa.model.InstructorDetail;
+import org.springframework.stereotype.Repository;
+import java.util.List;
+
+@Repository
+public class InstructorCustomRepositoryImpl implements InstructorCustomRepository {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @Override
+    public List<InstructorSummaryDTO> findInstructorSummariesByHobby(String hobby) {
+        // 1. Initialize CriteriaBuilder and CriteriaQuery
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<InstructorSummaryDTO> query = cb.createQuery(InstructorSummaryDTO.class);
+
+        // 2. Define the Root (The FROM clause)
+        Root<Instructor> instructorRoot = query.from(Instructor.class);
+
+        // 3. Perform a JOIN between Instructor and InstructorDetail tables
+        Join<Instructor, InstructorDetail> detailJoin = instructorRoot.join("instructorDetails", JoinType.INNER);
+
+        // 4. Implement Projection (Select ONLY specified fields into our DTO constructor)
+        query.select(cb.construct(
+                InstructorSummaryDTO.class,
+                instructorRoot.get("firstName"),
+                instructorRoot.get("email"),
+                detailJoin.get("hobby")
+        ));
+
+        // 5. Add Where Conditions (The WHERE clause)
+        Predicate hobbyPredicate = cb.equal(detailJoin.get("hobby"), hobby);
+        query.where(hobbyPredicate);
+
+        // 6. Execute the query using EntityManager
+        return entityManager.createQuery(query).getResultList();
+    }
+}
+
+## Step-by-Step Code Explanation:
+
+   1. CriteriaBuilder cb: The factory engine used to construct query pieces (like equal, construct, join).
+   2. CriteriaQuery<InstructorSummaryDTO>: Specifies that the final execution result of this query must map directly into our InstructorSummaryDTO wrapper rather than a database Entity.
+   3. Root<Instructor>: Sets the main target table (FROM instructor).
+   4. instructorRoot.join(...): Simulates an SQL INNER JOIN over to the instructor_detail table via the instructorDetails list variable name.
+   5. cb.construct(...): This is the Projection mechanism. It binds specific selected table fields matching the order of the parameters declared inside the InstructorSummaryDTO constructor.
+   6. cb.equal(...): Creates a dynamic filter condition dynamically translated down to WHERE hobby = '...'.
+
+------------------------------
+## Step 6: Create the Main Spring Data Repository
+Combine your custom repository logic with standard JPA capabilities.
+
+package net.guides.springboot.jpa.repository;
+import net.guides.springboot.jpa.model.Instructor;import org.springframework.data.jpa.repository.JpaRepository;import org.springframework.stereotype.Repository;
+
+@Repositorypublic interface InstructorRepository extends JpaRepository<Instructor, Long>, InstructorCustomRepository {
+    // Inherits standard save/delete methods + our custom Criteria query
+}
+
+------------------------------
+## Step 7: Build the Controller Layer
+Expose two endpoints: one to seed test data quickly, and one to fetch your custom Criteria-based projection.
+
+package net.guides.springboot.jpa.controller;
+import net.guides.springboot.jpa.dto.InstructorSummaryDTO;import net.guides.springboot.jpa.model.Instructor;import net.guides.springboot.jpa.model.InstructorDetail;import net.guides.springboot.jpa.repository.InstructorRepository;import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/instructors")public class InstructorController {
+
+    private final InstructorRepository instructorRepository;
+
+    public InstructorController(InstructorRepository instructorRepository) {
+        this.instructorRepository = instructorRepository;
+    }
+
+    // Endpoint to seed dummy database rows
+    @PostMapping("/seed")
+    public String seedData() {
+        Instructor inst1 = new Instructor("David", "Gilmore", "david@gmail.com");
+        inst1.addInstructorDetail(new InstructorDetail("dave", "hiking"));
+        inst1.addInstructorDetail(new InstructorDetail("gilmore", "singing"));
+
+        Instructor inst2 = new Instructor("Roger", "Waters", "roger@gmail.com");
+        inst2.addInstructorDetail(new InstructorDetail("rogerTV", "hiking"));
+
+        instructorRepository.save(inst1);
+        instructorRepository.save(inst2);
+
+        return "Database seeded successfully!";
+    }
+
+    // Endpoint testing Criteria API + Projection
+    @GetMapping("/summary")
+    public List<InstructorSummaryDTO> getSummariesByHobby(@RequestParam String hobby) {
+        return instructorRepository.findInstructorSummariesByHobby(hobby);
+    }
+}
+
+------------------------------
+## Step 8: Test Your Implementation in Postman
+
+   1. Seed Data: Send a POST request to http://localhost:8080/api/instructors/seed to build sample rows.
+   2. Test Criteria and Projections: Send a GET request to http://localhost:8080/api/instructors/summary?hobby=hiking.
+
+The Output Received:
+
+[
+    {
+        "firstName": "David",
+        "email": "david@gmail.com",
+        "hobby": "hiking"
+    },
+    {
+        "firstName": "Roger",
+        "email": "roger@gmail.com",
+        "hobby": "hiking"
+    }
+]
+
+Notice how your JSON output does not contain primary keys, last names, or YouTube channels. Hibernate automatically ran an optimal SQL statement pulling only the three requested columns.
+------------------------------
+If you want to expand this pattern, let me know:
+
+* Would you like to see how to add pagination or sorting into this Criteria query?
+* Should we add dynamic conditional filters (e.g., filtering by hobby only if the user provides it)?
+
+
