@@ -23,7 +23,7 @@ public class OnetoManyInstructorController {
     @Autowired
     private InstructorRepository instructorRepository;
 
-
+//just testing something to demonstrate git actions
     @GetMapping("/instructors")
     public List < Instructor > getInstructors() {
         return instructorRepository.findAll();

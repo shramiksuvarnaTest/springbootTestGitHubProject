@@ -1,5 +1,7 @@
 package net.guides.springboot.jpa.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import javax.persistence.CascadeType;
 import javax.persistence.Column;
 import javax.persistence.Entity;
@@ -26,6 +28,7 @@ public class InstructorDetail {
     private String hobby;
     
     @ManyToOne(cascade=CascadeType.ALL)
+    @JsonIgnoreProperties("instructorDetail")
     @JoinColumn(name = "instructor_detail_id")
     private Instructor instructor; 
 
